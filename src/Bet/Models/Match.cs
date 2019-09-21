@@ -1,4 +1,5 @@
 ﻿using CsvHelper.Configuration.Attributes;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -13,10 +14,10 @@ namespace Bet
         public string Team2Name { get; set; }
 
         [Name("Home score")]
-        public int Team1Score { get; set; }
+        public int? Team1Score { get; set; }
 
         [Name("Away score")]
-        public int Team2Score { get; set; }
+        public int? Team2Score { get; set; }
 
         [Name("Home odds")]
         public double Team1Odds { get; set; }
@@ -27,7 +28,9 @@ namespace Bet
         [Name("Draw odds")]
         public double DrawOdds { get; set; }
 
-        public int Margin => Team1Score - Team2Score;
+        public int? Margin => Team1Score - Team2Score;
+
+        public int? AbsoluteMargin => Margin is null ? Margin : Math.Abs((int)Margin);
 
         public bool IsTeam1Win => Margin > 0;
 
@@ -50,30 +53,60 @@ namespace Bet
 
         public double DrawImpliedProbabilityExclVigorish => (100d / TotalImpliedProbabilityInclVigorish) * DrawImpliedProbabilityInclVigorish;
 
-        public double ResultImpliedProbabilityExclVigorish()
+        public double ResultImpliedProbabilityExclVigorish
         {
-            return IsTeam1Win
-                ? Team1ImpliedProbabilityExclVigorish
-                : IsTeam2Win
-                    ? Team2ImpliedProbabilityExclVigorish
-                    : DrawImpliedProbabilityExclVigorish;
+            get
+            {
+                return IsTeam1Win
+                    ? Team1ImpliedProbabilityExclVigorish
+                    : IsTeam2Win
+                        ? Team2ImpliedProbabilityExclVigorish
+                        : DrawImpliedProbabilityExclVigorish;
+            }
         }
 
-        public bool WinnerPredictionCorrect()
+        public bool WinnerPredictionCorrect
         {
-            bool predictedCorrectly = false;
+            get
+            {
+                bool predictedCorrectly = false;
 
-            IList<double> ImpliedProbabilites = new List<double> { Team1ImpliedProbabilityInclVigorish, Team2ImpliedProbabilityInclVigorish, DrawImpliedProbabilityInclVigorish };
+                IList<double> ImpliedProbabilites = new List<double> { Team1ImpliedProbabilityInclVigorish, Team2ImpliedProbabilityInclVigorish, DrawImpliedProbabilityInclVigorish };
 
-            // TODO :: This is bad, if two implied probabilites happen to be equal we could get false positives
-            if (ImpliedProbabilites.Max() == Team1ImpliedProbabilityInclVigorish && IsTeam1Win)
-                predictedCorrectly = true;
-            else if (ImpliedProbabilites.Max() == Team2ImpliedProbabilityInclVigorish && IsTeam2Win)
-                predictedCorrectly = true;
-            else if (ImpliedProbabilites.Max() == DrawImpliedProbabilityInclVigorish && IsDraw)
-                predictedCorrectly = true;
+                if (ImpliedProbabilites.ElementAt(0) >= ImpliedProbabilites.ElementAt(1) && ImpliedProbabilites.ElementAt(0) >= ImpliedProbabilites.ElementAt(2) && IsTeam1Win)
+                    predictedCorrectly = true;
+                else if (ImpliedProbabilites.ElementAt(1) >= ImpliedProbabilites.ElementAt(0) && ImpliedProbabilites.ElementAt(1) >= ImpliedProbabilites.ElementAt(2) && IsTeam2Win)
+                    predictedCorrectly = true;
+                else if (ImpliedProbabilites.ElementAt(2) >= ImpliedProbabilites.ElementAt(0) && ImpliedProbabilites.ElementAt(2) >= ImpliedProbabilites.ElementAt(1) && IsDraw)
+                    predictedCorrectly = true;
 
-            return predictedCorrectly;
+                return predictedCorrectly;
+            }
+        }
+
+        public string PredictedWinnerName
+        {
+            get
+            {
+                IList<double> ImpliedProbabilites = new List<double> { Team1ImpliedProbabilityInclVigorish, Team2ImpliedProbabilityInclVigorish, DrawImpliedProbabilityInclVigorish };
+
+                if (ImpliedProbabilites.ElementAt(0) >= ImpliedProbabilites.ElementAt(1) && ImpliedProbabilites.ElementAt(0) >= ImpliedProbabilites.ElementAt(2))
+                    return Team1Name;
+                else if (ImpliedProbabilites.ElementAt(1) >= ImpliedProbabilites.ElementAt(0) && ImpliedProbabilites.ElementAt(1) >= ImpliedProbabilites.ElementAt(2))
+                    return Team2Name;
+                else
+                    return "Draw";
+            }
+        }
+
+        public double PredictedWinnerImpliedProbabilityExclVigorish
+        {
+            get
+            {
+                IList<double> ImpliedProbabilites = new List<double> { Team1ImpliedProbabilityInclVigorish, Team2ImpliedProbabilityInclVigorish, DrawImpliedProbabilityInclVigorish };
+
+                return (100d / TotalImpliedProbabilityInclVigorish) * ImpliedProbabilites.Max();
+            }
         }
     }
 }

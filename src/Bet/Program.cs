@@ -1,9 +1,10 @@
 ﻿using CsvHelper;
+using CsvHelper.Configuration;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Linq;
 using System.Threading;
 
 namespace Bet
@@ -11,6 +12,19 @@ namespace Bet
     internal class Program
     {
         private static void Main()
+        {
+            // LoadMatches();
+
+            var match = GetMatchInputs();
+
+            PresentResults(match);
+
+            Console.WriteLine();
+            Console.WriteLine("Press any key to exit...");
+            Console.ReadKey();
+        }
+
+        private static Match GetMatchInputs()
         {
             Console.WriteLine("What is the first team called?");
             var team1Name = Console.ReadLine();
@@ -31,36 +45,57 @@ namespace Bet
 
             Console.WriteLine($"What are the odds on {team1Name}?");
             var input = Console.ReadLine();
-            if (!double.TryParse(input.Clean(), NumberStyles.Float, CultureInfo.InvariantCulture, out double homeOddsEuropean))
+            if (!double.TryParse(input.Clean(), NumberStyles.Float, CultureInfo.InvariantCulture, out double team1Odds))
             {
                 Exit($"\"{input}\" was not parsable to a double, exiting...");
             }
 
             Console.WriteLine($"What are the odds on {team2Name}?");
             input = Console.ReadLine();
-            if (!double.TryParse(input.Clean(), NumberStyles.Float, CultureInfo.InvariantCulture, out double awayOddsEuropean))
+            if (!double.TryParse(input.Clean(), NumberStyles.Float, CultureInfo.InvariantCulture, out double team2Odds))
             {
                 Exit($"\"{input}\" was not parsable to a double, exiting...");
             }
 
             Console.WriteLine("What are the odds on a draw?");
             input = Console.ReadLine();
-            if (!double.TryParse(input.Clean(), NumberStyles.Float, CultureInfo.InvariantCulture, out double drawOddsEuropean))
+            if (!double.TryParse(input.Clean(), NumberStyles.Float, CultureInfo.InvariantCulture, out double drawOdds))
             {
                 Exit($"\"{input}\" was not parsable to a double, exiting...");
             }
 
-            var homeImpliedProbability = homeOddsEuropean.ToImpliedProbability();
-            var awayImpliedProbability = awayOddsEuropean.ToImpliedProbability();
-            var drawImpliedProbability = drawOddsEuropean.ToImpliedProbability();
+            return new Match
+            {
+                Team1Name = team1Name,
+                Team2Name = team2Name,
+                Team1Odds = team1Odds,
+                Team2Odds = team2Odds,
+                DrawOdds = drawOdds
+            };
+        }
 
+        private static void PresentResults(Match match)
+        {
+            Console.WriteLine();
+
+            Console.WriteLine($"{match.Team1Name} implied probability excl. vigorish: {match.Team1ImpliedProbabilityExclVigorish}%");
+            Console.WriteLine($"{match.Team2Name} implied probability excl. vigorish: {match.Team2ImpliedProbabilityExclVigorish}%");
+            Console.WriteLine($"Draw implied probability excl. vigorish: {match.DrawImpliedProbabilityExclVigorish}%");
+
+            Console.WriteLine();
+
+            Console.WriteLine($"{match.PredictedWinnerName.FormatMatchResult()} is predicted with implied probability {match.PredictedWinnerImpliedProbabilityExclVigorish}% excl. vigorish.");
+        }
+
+        private static void LoadMatches()
+        {
             var matches = new List<Match>();
 
             try
             {
                 using (TextReader reader = File.OpenText(@"Assets\results.csv"))
                 {
-                    var csv = new CsvReader(reader);
+                    var csv = new CsvReader(reader, new Configuration(CultureInfo.InvariantCulture));
                     csv.Configuration.Delimiter = ",";
                     while (csv.Read())
                     {
@@ -82,34 +117,21 @@ namespace Bet
             }
 
             // We only care about matches where the winner was correctly predicted by the bookmakers
-            matches.RemoveAll(m => !m.WinnerPredictionCorrect());
-
-            var team1Wins = matches.Where(m => m.IsTeam1Win);
-            var team2Wins = matches.Where(m => m.IsTeam2Win);
-            var draws = matches.Where(m => m.IsDraw);
-
-            var correctCount = matches.Count(m => m.WinnerPredictionCorrect());
+            matches.RemoveAll(m => !m.WinnerPredictionCorrect);
 
             var totalResultImpliedProbabilityExclVigorish = 0d;
             var totalMargin = 0;
 
-            foreach (var match in matches)
+            foreach (Match m in matches)
             {
-                totalResultImpliedProbabilityExclVigorish += match.ResultImpliedProbabilityExclVigorish();
-                totalMargin += Math.Abs(match.Margin);
+                totalResultImpliedProbabilityExclVigorish += m.ResultImpliedProbabilityExclVigorish;
+                totalMargin += m.AbsoluteMargin ?? 0;
 
-                Console.WriteLine($"Match {match.Team1Name} vs {match.Team2Name}:");
-                Console.WriteLine($"The result's IP excl. vigorish was {match.ResultImpliedProbabilityExclVigorish()}.");
-                Console.WriteLine($"The actual margin was {Math.Abs(match.Margin)}");
-                Console.WriteLine();
+                Debug.WriteLine($"Match {m.Team1Name} vs {m.Team2Name}:");
+                Debug.WriteLine($"The result's IP excl. vigorish was {m.ResultImpliedProbabilityExclVigorish}.");
+                Debug.WriteLine($"The actual margin was {m.AbsoluteMargin ?? 0}");
+                Debug.WriteLine(Environment.NewLine);
             }
-
-            Console.WriteLine($"Average result's IP excl. vigorish was {totalResultImpliedProbabilityExclVigorish / matches.Count}.");
-            Console.WriteLine($"Average margin was {totalMargin / matches.Count}.");
-
-            Console.WriteLine(Environment.NewLine);
-            Console.WriteLine("Press any key to exit...");
-            Console.ReadKey();
         }
 
         static void Exit(string exitMessage)
