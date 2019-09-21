@@ -2,9 +2,9 @@
 using CsvHelper.Configuration;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Threading;
 
 namespace Bet
@@ -13,28 +13,45 @@ namespace Bet
     {
         private static void Main()
         {
-            // LoadMatches();
+            IEnumerable<Match> matches = LoadMatches(@"Assets\results.csv");
 
-            var match = GetMatchInputs();
+            IEnumerable<Coordinate> coordinates = matches
+                .Select(m => new Coordinate
+                {
+                    X = m.ResultImpliedProbabilityExclVigorish(),
+                    Y = (int)m.AbsoluteMargin
+                });
 
-            PresentResults(match);
+            RegressionResult regressionResult = LinearRegression(coordinates);
+
+            Match match = GetMatchInputs();
+
+            double predictedValue = PredictMargin(regressionResult, match.PredictedWinnerImpliedProbabilityExclVigorish());
+
+            Console.WriteLine();
+
+            Console.WriteLine($"{match.PredictedWinnerName().FormatMatchResult()} is predicted with a margin of {Math.Round(predictedValue)}.");
 
             Console.WriteLine();
             Console.WriteLine("Press any key to exit...");
             Console.ReadKey();
         }
 
+        /// <summary>
+        /// Prompt for input match data
+        /// </summary>
+        /// <returns>A Match model based on the user inputs</returns>
         private static Match GetMatchInputs()
         {
             Console.WriteLine("What is the first team called?");
-            var team1Name = Console.ReadLine();
+            string team1Name = Console.ReadLine();
             if (string.IsNullOrWhiteSpace(team1Name))
             {
                 Exit("Input was null or empty, exiting...");
             }
 
             Console.WriteLine("What is the other team called?");
-            var team2Name = Console.ReadLine();
+            string team2Name = Console.ReadLine();
             if (string.IsNullOrWhiteSpace(team2Name))
             {
                 Exit("Input was null or empty, exiting...");
@@ -43,14 +60,14 @@ namespace Bet
             Console.WriteLine($"Predicting for {team1Name} vs {team2Name}!");
             Console.WriteLine("Please Enter all odds in European format (decimal), e.g. \"1.23\".");
 
-            Console.WriteLine($"What are the odds on {team1Name}?");
-            var input = Console.ReadLine();
+            Console.WriteLine($"What are the odds on {team1Name} to win?");
+            string input = Console.ReadLine();
             if (!double.TryParse(input.Clean(), NumberStyles.Float, CultureInfo.InvariantCulture, out double team1Odds))
             {
                 Exit($"\"{input}\" was not parsable to a double, exiting...");
             }
 
-            Console.WriteLine($"What are the odds on {team2Name}?");
+            Console.WriteLine($"What are the odds on {team2Name} to win?");
             input = Console.ReadLine();
             if (!double.TryParse(input.Clean(), NumberStyles.Float, CultureInfo.InvariantCulture, out double team2Odds))
             {
@@ -74,26 +91,17 @@ namespace Bet
             };
         }
 
-        private static void PresentResults(Match match)
-        {
-            Console.WriteLine();
-
-            Console.WriteLine($"{match.Team1Name} implied probability excl. vigorish: {match.Team1ImpliedProbabilityExclVigorish}%");
-            Console.WriteLine($"{match.Team2Name} implied probability excl. vigorish: {match.Team2ImpliedProbabilityExclVigorish}%");
-            Console.WriteLine($"Draw implied probability excl. vigorish: {match.DrawImpliedProbabilityExclVigorish}%");
-
-            Console.WriteLine();
-
-            Console.WriteLine($"{match.PredictedWinnerName.FormatMatchResult()} is predicted with implied probability {match.PredictedWinnerImpliedProbabilityExclVigorish}% excl. vigorish.");
-        }
-
-        private static void LoadMatches()
+        /// <summary>
+        /// Reads the input .csv of bookmaker odds and match results
+        /// </summary>
+        /// <returns>A set of Match models</returns>
+        private static IEnumerable<Match> LoadMatches(string path)
         {
             var matches = new List<Match>();
 
             try
             {
-                using (TextReader reader = File.OpenText(@"Assets\results.csv"))
+                using (TextReader reader = File.OpenText(path))
                 {
                     var csv = new CsvReader(reader, new Configuration(CultureInfo.InvariantCulture));
                     csv.Configuration.Delimiter = ",";
@@ -117,23 +125,68 @@ namespace Bet
             }
 
             // We only care about matches where the winner was correctly predicted by the bookmakers
-            matches.RemoveAll(m => !m.WinnerPredictionCorrect);
+            matches.RemoveAll(m => !m.IsWinnerPredictionCorrect());
 
-            var totalResultImpliedProbabilityExclVigorish = 0d;
-            var totalMargin = 0;
-
-            foreach (Match m in matches)
-            {
-                totalResultImpliedProbabilityExclVigorish += m.ResultImpliedProbabilityExclVigorish;
-                totalMargin += m.AbsoluteMargin ?? 0;
-
-                Debug.WriteLine($"Match {m.Team1Name} vs {m.Team2Name}:");
-                Debug.WriteLine($"The result's IP excl. vigorish was {m.ResultImpliedProbabilityExclVigorish}.");
-                Debug.WriteLine($"The actual margin was {m.AbsoluteMargin ?? 0}");
-                Debug.WriteLine(Environment.NewLine);
-            }
+            return matches;
         }
 
+        /// <summary>
+        /// Performs simple linear regression to output an R-squared, Y-intercept, and slope of the line of best fit
+        /// X values should be the independent variable
+        /// </summary>
+        /// <param name="coordinates">The collection of cartesian coordinates</param>
+        private static RegressionResult LinearRegression(IEnumerable<Coordinate> coordinates)
+        {
+            double sumX = 0d;
+            double sumY = 0d;
+            double sumXSquared = 0d;
+            double sumYSquared = 0d;
+            double sumCodeviates = 0d;
+
+            foreach (Coordinate coordinate in coordinates)
+            {
+                double x = coordinate.X;
+                double y = coordinate.Y;
+
+                sumCodeviates += x * y;
+                sumX += x;
+                sumY += y;
+                sumXSquared += x * x;
+                sumYSquared += y * y;
+            }
+
+            int count = coordinates.Count();
+            double ssX = sumXSquared - ((sumX * sumX) / count);
+
+            double rNumerator = (count * sumCodeviates) - (sumX * sumY);
+            double rDenominator = (count * sumXSquared - (sumX * sumX)) * (count * sumYSquared - (sumY * sumY));
+            double sCo = sumCodeviates - ((sumX * sumY) / count);
+
+            double meanX = sumX / count;
+            double meanY = sumY / count;
+            double dblR = rNumerator / Math.Sqrt(rDenominator);
+
+            return new RegressionResult
+            {
+                RSquared = dblR * dblR,
+                YIntercept = meanY - ((sCo / ssX) * meanX),
+                Slope = sCo / ssX
+            };
+        }
+
+        /// <summary>
+        /// Predicts a margin of victory
+        /// </summary>
+        /// <param name="regressionResult">Linear regression model</param>
+        /// <param name="impliedProbabilityExclVigorish">Implied probability of victory excl. vigorish</param>
+        /// <returns>Predicted margin of victory</returns>
+        private static double PredictMargin(RegressionResult regressionResult, double impliedProbabilityExclVigorish)
+            => (regressionResult.Slope * impliedProbabilityExclVigorish) + regressionResult.YIntercept;
+
+        /// <summary>
+        /// Exits the program
+        /// </summary>
+        /// <param name="exitMessage">The message to print before exiting</param>
         static void Exit(string exitMessage)
         {
             Console.WriteLine(exitMessage);
